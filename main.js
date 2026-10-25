@@ -2,105 +2,135 @@ import http from 'http';
 import fs from 'fs';
 import { program } from 'commander';
 
-// 1. Налаштування параметрів командного рядка за допомогою Commander
+// Параметри командного рядка: -h відповідає за адресу, --help — за довідку.
 program
+    .helpOption('--help', 'вивести довідку')
     .requiredOption('-i, --input <path>', 'шлях до файлу даних')
     .requiredOption('-h, --host <address>', 'адреса сервера')
     .requiredOption('-p, --port <number>', 'порт сервера')
-    .option('-o, --output <path>', 'файл, у який записується остання відповідь');
+    .option('-o, --output <path>', 'файл останньої надісланої відповіді');
 
 program.parse(process.argv);
 const options = program.opts();
+const port = Number(options.port);
 
-// 2. Перевірка існування файлу перед стартом сервера
-fs.access(options.input, fs.constants.F_OK, (err) => {
-    if (err) {
-        console.error('Cannot find input file');
-        process.exit(1); // Ненульовий код завершення
+if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error('Порт має бути цілим числом від 1 до 65535');
+    process.exit(1);
+}
+
+// Не перетворюємо відсутні, null і порожні значення на число 0.
+function isValidNumber(value) {
+    return value !== undefined && value !== null &&
+        String(value).trim() !== '' && Number.isFinite(Number(value));
+}
+
+// Записуємо кожну відповідь у --output, якщо цей параметр задано.
+// За збою запису повертаємо 500, не завершуючи роботу сервера.
+function sendResponse(res, status, body, contentType) {
+    const finish = () => {
+        res.writeHead(status, {'Content-Type': contentType});
+        res.end(body);
+    };
+
+    if (!options.output) {
+        finish();
+        return;
     }
-    // Якщо файл є, запускаємо сервер
+
+    fs.writeFile(options.output, body, 'utf-8', (writeErr) => {
+        if (writeErr) {
+            res.writeHead(500, {'Content-Type': 'text/plain; charset=utf-8'});
+            res.end('Помилка запису відповіді у файл');
+            return;
+        }
+        finish();
+    });
+}
+
+function sendError(res, status, message) {
+    sendResponse(res, status, message, 'text/plain; charset=utf-8');
+}
+
+// До запуску сервера асинхронно перевіряємо доступність файлу.
+fs.access(options.input, fs.constants.F_OK, (accessErr) => {
+    if (accessErr) {
+        console.error('Cannot find input file');
+        process.exit(1);
+    }
     startServer();
 });
 
 function startServer() {
     const server = http.createServer((req, res) => {
-        // Парсимо URL. baseURL потрібен просто для коректної роботи класу URL
-        const baseURL = `http://${options.host}:${options.port}`;
+        const baseURL = `http://${options.host}:${port}`;
         const parsedUrl = new URL(req.url, baseURL);
 
-        // Якщо маршрут не '/', повертаємо помилку 404
         if (parsedUrl.pathname !== '/') {
-            res.writeHead(404, {'Content-Type': 'text/plain; charset=utf-8'});
-            res.end('Сторінку не знайдено');
+            sendError(res, 404, 'Сторінку не знайдено');
             return;
         }
 
-        // 3. Читання файлу через асинхронний колбек
+        const furnished = parsedUrl.searchParams.get('furnished');
+        const maxPrice = parsedUrl.searchParams.get('max_price');
+
+        // Числову межу перевіряємо до читання файлу.
+        if (maxPrice !== null && !isValidNumber(maxPrice)) {
+            sendError(res, 400, 'Параметр max_price має бути числом');
+            return;
+        }
+
         fs.readFile(options.input, 'utf-8', (readErr, data) => {
             if (readErr) {
-                res.writeHead(500, {'Content-Type': 'text/plain; charset=utf-8'})
-                res.end('Помилка читання файлу на сервері');
+                sendError(res, 500, 'Помилка читання файлу на сервері');
                 return;
             }
+
             try {
-                // 4. Обробка формату NDJSON
-                // Розбиваємо текст на масив рядків по символу переносу (\n) і парсимо кожен рядок
-                // Розбиваємо текст на масив, відкидаючи всі порожні рядки
-                const lines = data.split('\n').filter(line => line.trim() !== '');
+                // NDJSON: окремий JSON-об'єкт у кожному непорожньому рядку.
+                const lines = data.split(/\r?\n/).filter(line => line.trim() !== '');
                 const rawHouses = lines.map(line => JSON.parse(line));
 
-                // Відбираємо тільки потрібні поля і перетворюємо рядки в числа
-                let result = rawHouses.map(house => ({
-                    price: Number(house.price),
-                    area: Number(house.area),
-                    furnishingstatus: house.furnishingstatus
-                }));
+                let result = rawHouses
+                    .filter(h => h && isValidNumber(h.price) && isValidNumber(h.area))
+                    .map(house => ({
+                        price: Number(house.price),
+                        area: Number(house.area),
+                        furnishingstatus: house.furnishingstatus == null ||
+                        String(house.furnishingstatus).trim() === ''
+                            ? null : String(house.furnishingstatus)
+                    }));
 
-                // 5. Отримання параметрів запиту
-                const furnished = parsedUrl.searchParams.get('furnished');
-                const maxPrice = parsedUrl.searchParams.get('max_price');
-
-                // 6. Застосування фільтрів
-                // Якщо ?furnished=true, залишаємо лише будинки зі статусом "furnished"
                 if (furnished === 'true') {
                     result = result.filter(h => h.furnishingstatus === 'furnished');
                 }
-
-                // Якщо передано ?max_price=X, перевіряємо, чи це число, і фільтруємо
                 if (maxPrice !== null) {
-                    const max = Number(maxPrice);
-                    if (isNaN(max)) { // Перевірка на нечислове значення[cite: 4]
-                        res.writeHead(400, {'Content-Type': 'text/plain; charset=utf-8'});
-                        res.end('Параметр max_price має бути числом');
-                        return;
-                    }
-                    result = result.filter(h => h.price < max);
+                    const limit = Number(maxPrice);
+                    result = result.filter(h => h.price < limit);
                 }
 
-                const jsonResponse = JSON.stringify(result, null, 2);
-
-                // 7. Асинхронний запис у файл, якщо вказано опцію --output
-                if (options.output) {
-                    fs.writeFile(options.output, jsonResponse, 'utf-8', (writeErr) => {
-                        if (writeErr) {
-                            console.error('Помилка запису файлу виводу:', writeErr); // Сервер продовжує працювати
-                        }
-                    });
-                }
-
-                // 8. Відправка успішної відповіді
-                // Задаємо правильний заголовок Content-Type
-                res.writeHead(200, {'Content-Type': 'application/json; charset=utf-8'});
-                res.end(jsonResponse);
-
+                sendResponse(
+                    res,
+                    200,
+                    JSON.stringify(result, null, 2),
+                    'application/json; charset=utf-8'
+                );
             } catch (parseErr) {
-                res.writeHead(500, {'Content-Type': 'text/plain; charset=utf-8'});
-                res.end('Помилка парсингу даних');
+                sendError(res, 500, 'Помилка парсингу даних');
             }
         });
     });
-    // Запуск прослуховування порту
-    server.listen(options.port, options.host, () => {
-        console.log(`Сервер працює на http://${options.host}:${options.port}`);
+
+    server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+            console.error(`Порт ${port} уже зайнятий`);
+        } else {
+            console.error('Помилка запуску сервера:', err.message);
+        }
+        process.exitCode = 1;
+    });
+
+    server.listen(port, options.host, () => {
+        console.log(`Сервер працює на http://${options.host}:${port}`);
     });
 }
