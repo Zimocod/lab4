@@ -98,6 +98,8 @@ function startServer() {
             }
         });
     });
-
-
+    // Запуск прослуховування порту
+    server.listen(options.port, options.host, () => {
+        console.log(`Сервер працює на http://${options.host}:${options.port}`);
+    });
 }
