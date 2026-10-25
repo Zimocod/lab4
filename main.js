@@ -55,6 +55,43 @@ function startServer() {
                     furnishingstatus: house.furnishingstatus
                 }));
 
+                // 5. Отримання параметрів запиту
+                const furnished = parsedUrl.searchParams.get('furnished');
+                const maxPrice = parsedUrl.searchParams.get('max_price');
+
+                // 6. Застосування фільтрів
+                // Якщо ?furnished=true, залишаємо лише будинки зі статусом "furnished"
+                if (furnished === 'true') {
+                    result = result.filter(h => h.furnishingstatus === 'furnished');
+                }
+
+                // Якщо передано ?max_price=X, перевіряємо, чи це число, і фільтруємо
+                if (maxPrice !== null) {
+                    const max = Number(maxPrice);
+                    if (isNaN(max)) { // Перевірка на нечислове значення[cite: 4]
+                        res.writeHead(400, {'Content-Type': 'text/plain; charset=utf-8'});
+                        res.end('Параметр max_price має бути числом');
+                        return;
+                    }
+                    result = result.filter(h => h.price < max);
+                }
+
+                const jsonResponse = JSON.stringify(result, null, 2);
+
+                // 7. Асинхронний запис у файл, якщо вказано опцію --output
+                if (options.output) {
+                    fs.writeFile(options.output, jsonResponse, 'utf-8', (writeErr) => {
+                        if (writeErr) {
+                            console.error('Помилка запису файлу виводу:', writeErr); // Сервер продовжує працювати
+                        }
+                    });
+                }
+
+                // 8. Відправка успішної відповіді
+                // Задаємо правильний заголовок Content-Type
+                res.writeHead(200, {'Content-Type': 'application/json; charset=utf-8'});
+                res.end(jsonResponse);
+
             } catch (parseErr) {
                 res.writeHead(500, {'Content-Type': 'text/plain; charset=utf-8'});
                 res.end('Помилка парсингу даних');
