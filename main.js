@@ -42,8 +42,23 @@ function startServer() {
                 res.end('Помилка читання файлу на сервері');
                 return;
             }
+            try {
+                // 4. Обробка формату NDJSON
+                // Розбиваємо текст на масив рядків по символу переносу (\n) і парсимо кожен рядок
+                const lines = data.trim().split('\n');
+                const rawHouses = lines.map(line => JSON.parse(line));
 
+                // Відбираємо тільки потрібні поля і перетворюємо рядки в числа
+                let result = rawHouses.map(house => ({
+                    price: Number(house.price),
+                    area: Number(house.area),
+                    furnishingstatus: house.furnishingstatus
+                }));
 
+            } catch (parseErr) {
+                res.writeHead(500, {'Content-Type': 'text/plain; charset=utf-8'});
+                res.end('Помилка парсингу даних');
+            }
         });
     });
 
