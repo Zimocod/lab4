@@ -22,4 +22,30 @@ fs.access(options.input, fs.constants.F_OK, (err) => {
     startServer();
 });
 
+function startServer() {
+    const server = http.createServer((req, res) => {
+        // Парсимо URL. baseURL потрібен просто для коректної роботи класу URL
+        const baseURL = `http://${options.host}:${options.port}`;
+        const parsedUrl = new URL(req.url, baseURL);
 
+        // Якщо маршрут не '/', повертаємо помилку 404
+        if (parsedUrl.pathname !== '/') {
+            res.writeHead(404, {'Content-Type': 'text/plain; charset=utf-8'});
+            res.end('Сторінку не знайдено');
+            return;
+        }
+
+        // 3. Читання файлу через асинхронний колбек
+        fs.readFile(options.input, 'utf-8', (readErr, data) => {
+            if (readErr) {
+                res.writeHead(500, {'Content-Type': 'text/plain; charset=utf-8'})
+                res.end('Помилка читання файлу на сервері');
+                return;
+            }
+
+
+        });
+    });
+
+
+}
