@@ -45,7 +45,8 @@ function startServer() {
             try {
                 // 4. Обробка формату NDJSON
                 // Розбиваємо текст на масив рядків по символу переносу (\n) і парсимо кожен рядок
-                const lines = data.trim().split('\n');
+                // Розбиваємо текст на масив, відкидаючи всі порожні рядки
+                const lines = data.split('\n').filter(line => line.trim() !== '');
                 const rawHouses = lines.map(line => JSON.parse(line));
 
                 // Відбираємо тільки потрібні поля і перетворюємо рядки в числа
